@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>훼손된 체스판 도미노 도전</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a2e;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: #e0e0e0;
+      user-select: none;
+      padding: 24px;
+    }
+
+    h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 6px; }
+    .subtitle { font-size: 0.82rem; color: #888; margin-bottom: 20px; text-align: center; }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .counter-badge {
+      background: #16213e;
+      border: 1px solid #2a4a7f;
+      border-radius: 8px;
+      padding: 7px 16px;
+      font-size: 0.9rem;
+    }
+    .counter-badge strong { font-size: 1.1rem; color: #64b5f6; }
+
+    .btn {
+      background: #1e3a5f;
+      color: #ccc;
+      border: 1px solid #2a5a8f;
+      border-radius: 8px;
+      padding: 7px 14px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.15s;
+    }
+    .btn:hover:not(:disabled) { background: #2a4a7f; color: #fff; }
+    .btn:disabled { opacity: 0.35; cursor: default; }
+
+    /* ── Board ── */
+    .board-wrap { position: relative; }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(8, 64px);
+      grid-template-rows: repeat(8, 64px);
+      border: 3px solid #3a3a5a;
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+      cursor: crosshair;
+    }
+
+    .sq { width: 64px; height: 64px; position: relative; }
+    .sq.light { background: #f0d9b5; }
+    .sq.dark  { background: #b58863; }
+
+    .sq.gone {
+      background: #111827 !important;
+      cursor: default;
+      display: flex; align-items: center; justify-content: center;
+      color: #2a3a5a; font-size: 20px; font-weight: bold;
+    }
+
+    .sq.sel::after {
+      content: '';
+      position: absolute; inset: 3px;
+      border: 3px solid #4caf50;
+      border-radius: 2px;
+      pointer-events: none;
+    }
+
+    /* ── Overlay (dominos + ghost) ── */
+    .overlay {
+      position: absolute; inset: 0;
+      pointer-events: none;
+    }
+
+    /* ── Domino ── */
+    .domino {
+      position: absolute;
+      border-radius: 7px;
+      pointer-events: all;
+      cursor: pointer;
+      display: flex;
+      z-index: 10;
+      transition: filter 0.12s, box-shadow 0.12s;
+    }
+    .domino:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 3px 12px rgba(0,0,0,0.6);
+      z-index: 50 !important;
+    }
+
+    .domino.v-dom { flex-direction: column; }
+
+    /* 모든 도미노: 흰 절반 + 검정 절반 */
+    .domino {
+      border: 2.5px solid #444;
+      overflow: hidden;
+    }
+
+    .half {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    /* 첫 번째 절반 = 흰색, 두 번째 절반 = 검정 (flipped 시 반전) */
+    .half.white-half { background: #f5f5f0; }
+    .half.black-half { background: #222228; }
+
+    .domino.h-dom .half:first-child { border-right: 1.5px solid #444; }
+    .domino.v-dom .half:first-child { border-bottom: 1.5px solid #444; }
+
+    /* ── Action buttons ── */
+    .d-acts {
+      position: absolute; inset: 0;
+      opacity: 0;
+      transition: opacity 0.15s;
+      pointer-events: none;
+    }
+    .domino:hover .d-acts { opacity: 1; pointer-events: all; }
+
+    .d-btn {
+      position: absolute;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; line-height: 1;
+      transition: transform 0.1s;
+      z-index: 60;
+    }
+    .d-btn:hover { transform: scale(1.25) !important; }
+
+    .flip-btn {
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(30, 90, 180, 0.92);
+      color: #fff;
+    }
+    .flip-btn:hover { transform: translate(-50%, -50%) scale(1.25) !important; }
+
+    .rot-btn {
+      top: 3px; right: 3px;
+      background: rgba(160, 100, 20, 0.92);
+      color: #fff;
+    }
+
+    .del-btn {
+      bottom: 3px; right: 3px;
+      background: rgba(170, 30, 30, 0.88);
+      color: #fff;
+      font-size: 10px;
+    }
+
+    /* ── Ghost preview ── */
+    .ghost {
+      position: absolute;
+      border-radius: 7px;
+      pointer-events: none;
+      z-index: 5;
+      border: 2px dashed #4caf50;
+      background: rgba(76, 175, 80, 0.2);
+    }
+    .ghost.bad {
+      border-color: #ef5350;
+      background: rgba(239, 83, 80, 0.2);
+    }
+
+    /* ── Status ── */
+    .status {
+      margin-top: 14px;
+      font-size: 0.87rem;
+      color: #888;
+      min-height: 28px;
+      text-align: center;
+      transition: color 0.2s;
+      max-width: 520px;
+    }
+    .status.ok  { color: #81c784; }
+    .status.win { color: #ffd54f; font-weight: 700; font-size: 1rem; }
+    .status.err { color: #ef9a9a; }
+
+    /* ── Legend ── */
+    .legend {
+      display: flex; gap: 20px; margin-bottom: 14px;
+      font-size: 0.78rem; color: #777;
+      align-items: center; flex-wrap: wrap; justify-content: center;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-domino {
+      display: flex;
+      width: 36px; height: 18px;
+      border: 1.5px solid #555; border-radius: 3px; overflow: hidden;
+    }
+    .legend-domino .lw { flex:1; background: #f5f5f0; }
+    .legend-domino .lb { flex:1; background: #222228; border-left: 1px solid #444; }
+  </style>
+</head>
+<body>
+
+<h1>훼손된 체스판 도미노 도전</h1>
+<p class="subtitle">좌상단·우하단 모서리가 제거된 62칸 체스판 — 도미노 31개로 모두 덮을 수 있을까요?</p>
+
+<div class="controls">
+  <div class="counter-badge">남은 도미노 <strong id="ctr">31</strong> / 31</div>
+  <button class="btn" id="undoBtn" disabled>↩ 실행 취소</button>
+  <button class="btn" id="resetBtn">↺ 초기화</button>
+</div>
+
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-domino"><div class="lw"></div><div class="lb"></div></div>
+    도미노 (흰색 + 검정)
+  </div>
+  <div class="legend-item">⇆ 뒤집기 &nbsp;|&nbsp; ↻ 회전 &nbsp;|&nbsp; ✕ 제거</div>
+</div>
+
+<div class="board-wrap">
+  <div class="board" id="board"></div>
+  <div class="overlay" id="overlay"></div>
+</div>
+
+<div class="status" id="status"></div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const N = 8, SZ = 64;
+const GONE = new Set(['0,0', '7,7']); // top-left, bottom-right
+const k = (r, c) => `${r},${c}`;
+
+// ── State ─────────────────────────────────────────────────────────────────
+let occ = emptyOcc(); // occ[r][c] = domino id or null
+let doms = {};        // id → {id, r1,c1,r2,c2, ci (colorIndex), flipped}
+let nextId = 1;
+let hist = [];        // undo snapshots
+
+// ── Interaction state ─────────────────────────────────────────────────────
+let sel = null;       // {r,c} first click selection
+let drag = null;      // {r,c,sx,sy,moved} drag state
+let ghost = null;     // ghost DOM element
+
+// ── DOM refs ──────────────────────────────────────────────────────────────
+const boardEl  = document.getElementById('board');
+const overlayEl = document.getElementById('overlay');
+const ctrEl    = document.getElementById('ctr');
+const statusEl = document.getElementById('status');
+const undoBtn  = document.getElementById('undoBtn');
+const resetBtn = document.getElementById('resetBtn');
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function emptyOcc() { return Array.from({length:N}, ()=>Array(N).fill(null)); }
+
+function inBounds(r,c) { return r>=0 && r<N && c>=0 && c<N; }
+
+function cellFree(r, c, exceptId=null) {
+  if (!inBounds(r,c) || GONE.has(k(r,c))) return false;
+  const v = occ[r][c];
+  return v === null || v === exceptId;
+}
+
+function canPlace(r1,c1,r2,c2) {
+  return inBounds(r1,c1) && inBounds(r2,c2)
+    && !GONE.has(k(r1,c1)) && !GONE.has(k(r2,c2))
+    && occ[r1][c1]===null && occ[r2][c2]===null
+    && Math.abs(r1-r2)+Math.abs(c1-c2)===1;
+}
+
+function sqEl(r,c) { return boardEl.children[r*N+c]; }
+
+// ── History ───────────────────────────────────────────────────────────────
+function snap() {
+  hist.push({ occ: occ.map(row=>[...row]), doms: JSON.parse(JSON.stringify(doms)), nextId });
+  if (hist.length > 120) hist.shift();
+}
+
+function undo() {
+  if (!hist.length) return;
+  const s = hist.pop();
+  occ=s.occ; doms=s.doms; nextId=s.nextId;
+  redraw(); setStatus('실행 취소되었습니다.');
+}
+
+// ── Domino placement / removal ────────────────────────────────────────────
+function place(r1,c1,r2,c2) {
+  if (!canPlace(r1,c1,r2,c2)) return false;
+  snap();
+  const id = nextId++;
+  doms[id] = {id, r1, c1, r2, c2, flipped: false};
+  occ[r1][c1] = occ[r2][c2] = id;
+  redraw(); return true;
+}
+
+function removeDom(id) {
+  const d = doms[id]; if (!d) return;
+  snap();
+  occ[d.r1][d.c1] = occ[d.r2][d.c2] = null;
+  delete doms[id];
+  redraw(); setStatus('도미노를 제거했습니다.');
+}
+
+function flipDom(id) {
+  snap(); doms[id].flipped ^= true; redraw();
+}
+
+// ── Rotation ──────────────────────────────────────────────────────────────
+function rotOptions(d) {
+  const isH = d.r1 === d.r2;
+  const anchors = [[d.r1,d.c1],[d.r2,d.c2]];
+  const dirs = isH ? [[-1,0],[1,0]] : [[0,-1],[0,1]];
+  const opts = [];
+  for (const [ar,ac] of anchors) {
+    for (const [dr,dc] of dirs) {
+      const nr=ar+dr, nc=ac+dc;
+      if (!inBounds(nr,nc) || GONE.has(k(nr,nc))) continue;
+      const v = occ[nr][nc];
+      if (v!==null && v!==d.id) continue;
+      // The anchor cell is occupied by d itself → treated as free for new pos
+      opts.push([ar,ac,nr,nc]);
+    }
+  }
+  // exclude "same as current"
+  return opts.filter(([a,b,c2,d2]) =>
+    !((a===d.r1&&b===d.c1&&c2===d.r2&&d2===d.c2)||(a===d.r2&&b===d.c2&&c2===d.r1&&d2===d.c1))
+  );
+}
+
+function rotateDom(id) {
+  const d = doms[id];
+  const opts = rotOptions(d);
+  if (!opts.length) return;
+  snap();
+  occ[d.r1][d.c1] = occ[d.r2][d.c2] = null;
+  [d.r1,d.c1,d.r2,d.c2] = opts[0];
+  occ[d.r1][d.c1] = occ[d.r2][d.c2] = id;
+  redraw();
+}
+
+// ── Ghost preview ─────────────────────────────────────────────────────────
+function showGhost(r1,c1,r2,c2) {
+  clearGhost();
+  const valid = canPlace(r1,c1,r2,c2);
+  const isH = r1===r2;
+  const minR=Math.min(r1,r2), minC=Math.min(c1,c2);
+  ghost = document.createElement('div');
+  ghost.className = 'ghost' + (valid?'':' bad');
+  ghost.style.cssText = `left:${minC*SZ+2}px;top:${minR*SZ+2}px;`
+    + `width:${isH?SZ*2-4:SZ-4}px;height:${isH?SZ-4:SZ*2-4}px;`;
+  overlayEl.appendChild(ghost);
+}
+function clearGhost() { if (ghost) { ghost.remove(); ghost=null; } }
+
+// ── Rendering ─────────────────────────────────────────────────────────────
+function makeDomEl(d) {
+  const isH = d.r1===d.r2;
+  const minR=Math.min(d.r1,d.r2), minC=Math.min(d.c1,d.c2);
+
+  const el = document.createElement('div');
+  el.id = `d${d.id}`;
+  el.className = `domino ${isH?'h-dom':'v-dom'}`;
+  el.style.cssText = `left:${minC*SZ+2}px;top:${minR*SZ+2}px;`
+    + `width:${isH?SZ*2-4:SZ-4}px;height:${isH?SZ-4:SZ*2-4}px;z-index:${10+d.id};`;
+
+  // Two halves: 흰색 + 검정 (flipped 시 순서 반전)
+  const h1 = document.createElement('div');
+  const h2 = document.createElement('div');
+  h1.className = 'half ' + (d.flipped ? 'black-half' : 'white-half');
+  h2.className = 'half ' + (d.flipped ? 'white-half' : 'black-half');
+  el.append(h1, h2);
+
+  // Action buttons container
+  const acts = document.createElement('div'); acts.className='d-acts';
+
+  // Flip button (center)
+  const fBtn = mkBtn('⇆', 'd-btn flip-btn', '뒤집기 (점 위치 교환)', e => { e.stopPropagation(); flipDom(d.id); });
+  acts.appendChild(fBtn);
+
+  // Rotate button (top-right, only if possible)
+  if (rotOptions(d).length > 0) {
+    const rBtn = mkBtn('↻', 'd-btn rot-btn', '90° 회전 (공간이 있을 때)', e => { e.stopPropagation(); rotateDom(d.id); });
+    acts.appendChild(rBtn);
+  }
+
+  // Delete button (bottom-right)
+  const dBtn = mkBtn('✕', 'd-btn del-btn', '도미노 제거', e => { e.stopPropagation(); removeDom(d.id); });
+  acts.appendChild(dBtn);
+
+  el.appendChild(acts);
+  return el;
+}
+
+function mkBtn(text, cls, title, handler) {
+  const b = document.createElement('button');
+  b.className=cls; b.title=title; b.textContent=text;
+  b.addEventListener('mousedown', e=>e.stopPropagation());
+  b.addEventListener('click', handler);
+  return b;
+}
+
+function redraw() {
+  overlayEl.innerHTML = '';
+  Object.values(doms).forEach(d => overlayEl.appendChild(makeDomEl(d)));
+  const placed = Object.keys(doms).length;
+  ctrEl.textContent = 31 - placed;
+  undoBtn.disabled = hist.length===0;
+
+  if (placed===31) setStatus('31개 모두 놓았습니다! 정말로 가능했나요?! 🎉', 'win');
+  else if (placed>0) setStatus(`${placed}개 배치됨 — 남은 도미노: ${31-placed}개`, 'ok');
+  else setStatus('빈 칸을 클릭하거나 드래그해서 도미노를 놓아보세요.');
+}
+
+function setStatus(msg, cls='') {
+  statusEl.textContent=msg;
+  statusEl.className='status '+cls;
+}
+
+// ── Click mode ────────────────────────────────────────────────────────────
+function handleCellClick(r,c) {
+  if (!inBounds(r,c)||GONE.has(k(r,c))||occ[r][c]!==null) {
+    // Clicked on unavailable cell — cancel selection
+    if (sel) { sqEl(sel.r,sel.c).classList.remove('sel'); sel=null; clearGhost(); }
+    return;
+  }
+  if (!sel) {
+    sel={r,c};
+    sqEl(r,c).classList.add('sel');
+    setStatus('인접한 다른 칸을 클릭하세요. (같은 칸 다시 클릭하면 취소)');
+  } else {
+    const {r:r1,c:c1}=sel;
+    sqEl(r1,c1).classList.remove('sel');
+    sel=null; clearGhost();
+    if (r===r1&&c===c1) { setStatus('선택 취소.'); return; }
+    if (!place(r1,c1,r,c)) setStatus('인접한 빈 칸에만 놓을 수 있습니다.', 'err');
+  }
+}
+
+// ── Board init ────────────────────────────────────────────────────────────
+function buildBoard() {
+  boardEl.innerHTML='';
+  for (let r=0;r<N;r++) for (let c=0;c<N;c++) {
+    const sq=document.createElement('div');
+    sq.className='sq '+((r+c)%2===0?'light':'dark');
+    sq.dataset.r=r; sq.dataset.c=c;
+    if (GONE.has(k(r,c))) { sq.classList.add('gone'); sq.textContent='✕'; }
+    boardEl.appendChild(sq);
+  }
+}
+
+// ── Mouse events ──────────────────────────────────────────────────────────
+
+// Mousedown: start drag tracking
+boardEl.addEventListener('mousedown', e => {
+  if (e.button!==0) return;
+  const sq = e.target.closest('.sq');
+  if (!sq||sq.classList.contains('gone')) return;
+  drag = {r:+sq.dataset.r, c:+sq.dataset.c, sx:e.clientX, sy:e.clientY, moved:false};
+  e.preventDefault();
+});
+
+// Mousemove on document: update ghost during drag
+document.addEventListener('mousemove', e => {
+  if (!drag) {
+    // Click mode: show preview when hovering adjacent cells
+    if (sel) {
+      const sq=document.elementFromPoint(e.clientX,e.clientY)?.closest('.sq');
+      if (sq&&!sq.classList.contains('gone')) {
+        const r=+sq.dataset.r, c=+sq.dataset.c;
+        if (!(r===sel.r&&c===sel.c)) { showGhost(sel.r,sel.c,r,c); return; }
+      }
+      clearGhost();
+    }
+    return;
+  }
+  const dx=e.clientX-drag.sx, dy=e.clientY-drag.sy;
+  if (!drag.moved && Math.abs(dx)+Math.abs(dy)>6) {
+    drag.moved=true;
+    // Cancel click selection when drag starts
+    if (sel) { sqEl(sel.r,sel.c).classList.remove('sel'); sel=null; }
+  }
+  if (!drag.moved) return;
+  const sq=document.elementFromPoint(e.clientX,e.clientY)?.closest('.sq');
+  if (!sq||sq.classList.contains('gone')) { clearGhost(); return; }
+  const r=+sq.dataset.r, c=+sq.dataset.c;
+  if (r===drag.r&&c===drag.c) { clearGhost(); return; }
+  showGhost(drag.r,drag.c,r,c);
+});
+
+// Mouseup on document: finalize drag or treat as click
+document.addEventListener('mouseup', e => {
+  if (!drag) return;
+  clearGhost();
+  const sq=document.elementFromPoint(e.clientX,e.clientY)?.closest('.sq');
+  if (!drag.moved) {
+    // Treat as click
+    handleCellClick(drag.r, drag.c);
+  } else if (sq&&!sq.classList.contains('gone')) {
+    const r=+sq.dataset.r, c=+sq.dataset.c;
+    if (!(r===drag.r&&c===drag.c)) {
+      if (!place(drag.r,drag.c,r,c)) setStatus('인접한 빈 칸에만 놓을 수 있습니다.', 'err');
+    }
+  }
+  drag=null;
+});
+
+// Click outside board: cancel selection
+document.addEventListener('click', e => {
+  if (!sel) return;
+  if (!e.target.closest('.board-wrap')) {
+    sqEl(sel.r,sel.c).classList.remove('sel');
+    sel=null; clearGhost();
+    setStatus('선택 취소.');
+  }
+});
+
+// ── Buttons ───────────────────────────────────────────────────────────────
+undoBtn.addEventListener('click', undo);
+resetBtn.addEventListener('click', () => {
+  occ=emptyOcc(); doms={}; nextId=1; hist=[];
+  drag=null;
+  if (sel) { sqEl(sel.r,sel.c).classList.remove('sel'); sel=null; }
+  clearGhost();
+  redraw();
+  setStatus('초기화! 다시 도전해보세요.');
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────
+buildBoard();
+redraw();
+setStatus('두 모서리(좌상단·우하단)가 제거된 체스판입니다. 도미노 31개로 모두 덮을 수 있을까요?');
+</script>
+</body>
+</html>
